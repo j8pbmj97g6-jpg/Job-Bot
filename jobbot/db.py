@@ -76,6 +76,19 @@ CREATE TABLE IF NOT EXISTS external_credentials (
     notes           TEXT,
     UNIQUE (platform, tenant, email)
 );
+
+-- Cache of "does this new question mean the same as one we already
+-- answered?" lookups (see question_matcher.py). Each distinct question
+-- wording is resolved via Claude at most once, ever -- matched_key is
+-- NULL for a confident "no match", which is itself a valid cached result
+-- and must not be re-queried. Answer VALUES are never stored here or sent
+-- to the API -- only question text and the answers table's existing keys.
+CREATE TABLE IF NOT EXISTS question_aliases (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_raw    TEXT NOT NULL UNIQUE,       -- normalised (stripped/lowered) incoming question
+    matched_key     TEXT,                       -- answers.question_key this means the same as, or NULL
+    created_at      INTEGER NOT NULL
+);
 """
 
 
@@ -218,6 +231,39 @@ class Store:
             ),
         )
         self.conn.commit()
+
+    def get_question_alias(self, question: str) -> sqlite3.Row | None:
+        """A previously-resolved "does this mean the same as X" lookup, or
+        None if this exact wording has never been checked before. NOTE: a
+        *found* row can still have matched_key = NULL -- that's a cached
+        confident "no match", not a cache miss; callers must distinguish
+        "row is None" (never checked) from "row.matched_key is None"
+        (checked, no match)."""
+        return self.conn.execute(
+            "SELECT * FROM question_aliases WHERE question_raw = ?", (self.normalise(question),)
+        ).fetchone()
+
+    def put_question_alias(self, question: str, matched_key: str | None) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO question_aliases (question_raw, matched_key, created_at)
+            VALUES (?,?,?)
+            ON CONFLICT(question_raw) DO UPDATE SET
+                matched_key = excluded.matched_key,
+                created_at = excluded.created_at
+            """,
+            (self.normalise(question), matched_key, int(time.time())),
+        )
+        self.conn.commit()
+
+    def known_questions(self, limit: int = 60) -> list[sqlite3.Row]:
+        """Distinct already-answered questions (key + display text only --
+        never the answer value), most recently used first. Used as the
+        candidate list for question_matcher's semantic matching."""
+        return self.conn.execute(
+            "SELECT question_key, question_raw FROM answers ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
 
     def close(self) -> None:
         self.conn.close()

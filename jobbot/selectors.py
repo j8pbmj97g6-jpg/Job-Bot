@@ -66,9 +66,16 @@ LINKEDIN = {
         "button.show-more-less-html__button--more",
         "button[aria-label='Click to see more description']",
     ],
+    # Usually a <button>, but some listings render it as an <a> instead
+    # (confirmed live: 'aria=Easy Apply to this job | text=Easy Apply' on an
+    # <a> element) -- without this, those jobs were wrongly treated as
+    # requiring an external site, both at collection time (easy_apply=0,
+    # so they'd be filtered out of the apply queue entirely) and at apply
+    # time ("No Easy Apply button found").
     "easy_apply_button": [
         "button.jobs-apply-button",
         "button[aria-label*='Easy Apply']",
+        "a[aria-label*='Easy Apply']",
     ],
     # Easy Apply modal (multi-step form)
     "modal_container": [
@@ -86,6 +93,15 @@ LINKEDIN = {
         "div.artdeco-text-input--container",
     ],
     "form_label": ["label", "legend", "span.artdeco-text-input--label"],
+    # Type-ahead combobox (e.g. "Location (city)"): a plain .fill() sets the
+    # visible text but not LinkedIn's required underlying selection --
+    # "This field is required" persists. Must be checked BEFORE text_input,
+    # since it also matches input[type='text']. NOTE: this field does NOT
+    # carry role="combobox" in LinkedIn's real markup (confirmed via live
+    # DevTools inspection after that guess silently never matched) --
+    # data-testid="typeahead-input" is the real, stable marker. id is
+    # dynamically generated («r13» etc.) and unusable as a selector.
+    "combobox_input": ["input[data-testid='typeahead-input']", "input[role='combobox']"],
     "text_input": ["input[type='text']", "input[type='tel']", "input[type='number']", "textarea"],
     "select_input": ["select"],
     "radio_input": ["input[type='radio']"],

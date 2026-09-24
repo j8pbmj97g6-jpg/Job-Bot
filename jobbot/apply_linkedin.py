@@ -22,6 +22,7 @@ from pathlib import Path
 
 from playwright.sync_api import Page
 
+from . import question_matcher
 from .answer_aliases import canonicalize
 from .browser import pause
 from .db import Store
@@ -276,8 +277,65 @@ def _fill_field(_unused_page, container, question: str, store: Store) -> bool:
     # Common questions (phone, email, expected salary, years of experience,
     # etc.) get looked up under a canonical key so an answer given once is
     # reused regardless of how a particular company phrases the question.
-    lookup_key = canonicalize(question) or question
+    canon = canonicalize(question)
+    lookup_key = canon or question
     cached = store.get_answer(lookup_key)
+    if not cached and canon is None:
+        # No hand-written pattern recognized this wording. Before asking the
+        # person again, check whether it means the same thing as a question
+        # already answered (see question_matcher.py) -- e.g. a phrasing of
+        # "current CTC" answer_aliases.py's patterns don't happen to catch.
+        # Cheap after the first time: every wording is resolved once and
+        # cached, so this is a cache lookup, not an API call, on repeats.
+        matched_key = question_matcher.find_matching_question(store, question)
+        if matched_key:
+            lookup_key = matched_key
+            cached = store.get_answer(lookup_key)
+
+    # Type-ahead combobox ("Location (city)" and similar). Must be checked
+    # before the generic text input, since it also matches input[type='text'].
+    # A plain .fill() sets the visible text but LinkedIn still requires an
+    # actual selection from the dropdown, or validation rejects it with
+    # "This field is required". Typing then confirming with Down-arrow +
+    # Enter (rather than clicking a suggestion div) is what reliably commits
+    # the selection -- clicking the option was unreliable in testing.
+    combo_in = container.locator(", ".join(S["combobox_input"])).first
+    if combo_in.count():
+        # Unlike a plain text field, existing text here does NOT mean the
+        # field is genuinely filled: browser/OS address autofill (or a
+        # leftover partial attempt) can set visible text directly without
+        # ever going through LinkedIn's own "pick a suggestion" flow, so its
+        # internal selection state stays unset -- validation then rejects it
+        # with "This field is required" even though text is visibly there.
+        # Always clear and go through a real keyboard selection instead of
+        # trusting whatever text happens to already be present. force=True
+        # because LinkedIn's floating-ui suggestion portal can sit over the
+        # input and block a normal click ("subtree intercepts pointer
+        # events") even when nothing is visibly open yet.
+        combo_in.click(timeout=5000, force=True)
+        combo_in.fill("")
+        if cached:
+            answer = cached["answer"]
+        else:
+            answer, source = _await_answer(
+                question, lambda: combo_in.input_value(timeout=2000), page=container.page
+            )
+            if not answer:
+                return False
+            if source == "browser":
+                # User already typed AND selected a suggestion themselves --
+                # nothing left for us to do.
+                store.put_answer(lookup_key, answer, "combobox", display_question=question)
+                print(f"    Saved the location you entered in the browser: {answer}")
+                return True
+        combo_in.click(timeout=5000, force=True)
+        combo_in.fill("")
+        combo_in.type(answer, delay=60)
+        pause(2.0, 3.0)  # let the suggestion dropdown render
+        combo_in.press("ArrowDown")
+        combo_in.press("Enter")
+        store.put_answer(lookup_key, answer, "combobox", display_question=question)
+        return True
 
     # Text / number / phone input
     text_in = container.locator(", ".join(S["text_input"])).first
@@ -314,6 +372,15 @@ def _fill_field(_unused_page, container, question: str, store: Store) -> bool:
             return True  # site chrome, never a question -- changing it reloads the page
         if cached and cached["answer"] in options:
             select_in.select_option(label=cached["answer"])
+            return True
+        if len(options) == 1:
+            # Only one possible choice (e.g. a single saved email address) --
+            # nothing to decide, and "wait until the selection changes" can
+            # never fire since there's no second option to change to. The
+            # browser shows it pre-selected by default; explicitly select it
+            # so the page's own change handlers still run.
+            select_in.select_option(index=0)
+            store.put_answer(lookup_key, options[0], "select", display_question=question)
             return True
         start_idx = select_in.evaluate("e => e.selectedIndex", timeout=2000)
 
@@ -703,14 +770,20 @@ def _upload_tailored_resume(page: Page, root, resume_path: str) -> str:
     except Exception:
         return "not_a_resume_step"
 
-    pause(2, 3.5)  # LinkedIn takes a moment to process and auto-select the new upload
+    # LinkedIn takes a moment to process the upload and re-render the resume
+    # list with the new file auto-selected -- a fixed sleep here was
+    # occasionally too short (confirmed live: the exact same upload+check
+    # sequence succeeded on a retry with a longer wait, nothing else
+    # different), so poll instead of guessing one fixed delay.
     basename = Path(resume_path).name
-    try:
-        card = page.get_by_role("radio", name=basename, exact=True)
-        if card.count() and _card_selected(card.first):
-            return "uploaded"
-    except Exception:
-        pass
+    card = page.get_by_role("radio", name=basename, exact=True)
+    for _ in range(10):
+        pause(0.6, 0.9)
+        try:
+            if card.count() and _card_selected(card.first):
+                return "uploaded"
+        except Exception:
+            pass
     return "unverified"
 
 

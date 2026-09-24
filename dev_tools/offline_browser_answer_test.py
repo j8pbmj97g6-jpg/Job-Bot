@@ -52,6 +52,24 @@ with sync_playwright() as p:
     got = store.get_answer(A.canonicalize(QS) or QS)
     check("dropdown choice captured", r is True and got and got["answer"] == "Student", f"(cached={got['answer'] if got else None})")
 
+    # 2b) single-option dropdown (e.g. one saved email address): the browser
+    # pre-selects it by default, so "wait until selectedIndex changes" can
+    # never fire -- there's no second option to change to. Must resolve
+    # immediately on its own, not hang until the 900s timeout. This is what
+    # was silently blocking every field after it (e.g. phone number) in a
+    # real run.
+    QE = "Email address*"
+    pg = page_with(b, f'<div id="w"><select id="e"><option>candidate@example.com</option></select></div>')
+    t0 = time.time()
+    r = A._fill_field(None, pg.locator("#w"), QE, store)
+    elapsed = time.time() - t0
+    got = store.get_answer(A.canonicalize(QE) or QE)
+    check(
+        "single-option dropdown resolves instantly, not left blocking",
+        r is True and elapsed < 5 and got and got["answer"] == "candidate@example.com",
+        f"(took {elapsed:.1f}s, cached={got['answer'] if got else None})",
+    )
+
     # 3) radio chosen in the browser
     radio = lambda i, t: (f'<div role="radio" aria-label="{QR}"><div><input type="radio" name="g" id="r{i}">'
                           f'<label for="r{i}"></label></div><div><p>{t}</p></div></div>')

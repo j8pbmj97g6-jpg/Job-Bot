@@ -106,6 +106,21 @@ def cmd_score(args: argparse.Namespace) -> None:
     store.close()
 
 
+# Cities to attempt before anything else. Matches "Bengaluru East",
+# "Greater Chennai Area", "Bangalore Urban", etc. -- substring match on the
+# lowercased location string, not an exact-equality check.
+PRIORITY_CITIES = ("bengaluru", "bangalore", "chennai", "hyderabad")
+
+
+def _location_priority(job) -> int:
+    """0 = location mentions a priority city, 1 = everything else (broad
+    'India', 'APAC', other cities). Lower sorts first; Python's sort is
+    stable, so jobs within each group keep their original (most-recent-
+    first) relative order."""
+    loc = (job["location"] or "").lower()
+    return 0 if any(city in loc for city in PRIORITY_CITIES) else 1
+
+
 def cmd_apply(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
     store = Store(cfg.get("database", "jobs.db"))
@@ -130,9 +145,31 @@ def cmd_apply(args: argparse.Namespace) -> None:
     all_queued = store.jobs(status="queued", limit=10_000)
     source = args.source
 
+    # The collector already checked, per job, whether an Easy Apply /
+    # direct-apply button exists (jobs.easy_apply) or the posting only offers
+    # "Apply on company site". Filter on that saved flag instead of
+    # discovering it by opening every posting -- external-ATS jobs aren't
+    # handled by this command anyway, so opening them just wastes a visit.
+    # --include-external turns this filter off (e.g. to re-survey which
+    # queued jobs are external before a manual/hybrid session).
+    if not args.include_external:
+        external_count = sum(
+            1 for j in all_queued if j["source"] == source and not j["easy_apply"]
+        )
+        all_queued = [j for j in all_queued if j["easy_apply"]]
+        if external_count:
+            print(f"Filtered out {external_count} queued {source} job(s) that need an external "
+                  f"site (jobs.easy_apply=0) -- pass --include-external to visit those too.\n")
+
     if source == "linkedin":
-        jobs = [j for j in all_queued if j["source"] == "linkedin"][:max_visits]
+        linkedin_jobs = [j for j in all_queued if j["source"] == "linkedin"]
+        linkedin_jobs.sort(key=_location_priority)
+        priority_count = sum(1 for j in linkedin_jobs if _location_priority(j) == 0)
+        jobs = linkedin_jobs[:max_visits]
         other_count = sum(1 for j in all_queued if j["source"] == "naukri")
+        if priority_count:
+            print(f"{priority_count} queued LinkedIn job(s) are in a priority city "
+                  f"(Bengaluru/Chennai/Hyderabad) and will be attempted first.\n")
         if other_count:
             print(f"Skipping {other_count} queued Naukri job(s) -- pass --source naukri "
                   f"to apply to those instead.\n")
@@ -172,8 +209,14 @@ def cmd_apply(args: argparse.Namespace) -> None:
             print(f"\nDone: {attempts} application attempt(s) this run.")
 
     elif source == "naukri":
-        jobs = [j for j in all_queued if j["source"] == "naukri"][:max_visits]
+        naukri_jobs = [j for j in all_queued if j["source"] == "naukri"]
+        naukri_jobs.sort(key=_location_priority)
+        priority_count = sum(1 for j in naukri_jobs if _location_priority(j) == 0)
+        jobs = naukri_jobs[:max_visits]
         other_count = sum(1 for j in all_queued if j["source"] == "linkedin")
+        if priority_count:
+            print(f"{priority_count} queued Naukri job(s) are in a priority city "
+                  f"(Bengaluru/Chennai/Hyderabad) and will be attempted first.\n")
         if other_count:
             print(f"Skipping {other_count} queued LinkedIn job(s) -- pass --source linkedin "
                   f"(or omit --source) to apply to those instead.\n")
@@ -287,6 +330,10 @@ def main() -> None:
     ap_ = sub.add_parser("apply", help="apply to queued (high-fit) jobs")
     ap_.add_argument("--limit", type=int, default=None, help="max applications this run")
     ap_.add_argument("--source", choices=["linkedin", "naukri"], default="linkedin")
+    ap_.add_argument(
+        "--include-external", action="store_true",
+        help="also visit jobs flagged easy_apply=0 (external ATS) instead of skipping them for free"
+    )
     ap_.set_defaults(func=cmd_apply)
 
     t = sub.add_parser("tailor", help="generate a tailored resume per queued job")

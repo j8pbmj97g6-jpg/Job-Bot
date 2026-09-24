@@ -19,7 +19,14 @@ _PATTERNS: list[tuple[str, str]] = [
     (r"mobile\s*(phone)?\s*number|phone\s*number|contact\s*number", "phone_number"),
     (r"email\s*address|e-?mail\b", "email_address"),
     (r"expected\s*(ctc|salary|compensation|pay)", "expected_salary"),
-    (r"(current|last)(\s*/\s*(current|last))?\s*(ctc|salary|compensation|pay)", "current_salary"),
+    # "current CTC", "last drawn CTC", "current / last drawn salary" are all
+    # the same question (your existing/most recent pay) -- "drawn" is an
+    # optional word between last/current and the pay term. A BARE "What is
+    # Your CTC?" (no current/last/expected qualifier) is deliberately left
+    # unaliased -- it's genuinely ambiguous (could mean current or expected),
+    # so it still asks rather than guessing.
+    (r"(current|last)(\s*drawn)?(\s*/\s*(current|last)(\s*drawn)?)?\s*(ctc|salary|compensation|pay)",
+     "current_salary"),
     # "Are you an immediate joiner? If not, specify your notice period..." and
     # "Can you start immediately?" are one question; keep it apart from notice_period.
     # ...but the variant that also asks for the notice period in days is a
