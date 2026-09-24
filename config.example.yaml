@@ -1,0 +1,51 @@
+# Copy to config.yaml and edit. config.yaml is gitignored.
+
+database: jobs.db
+profile_dir: ~/.jobbot/chrome-profile   # Chrome profile; log in here once, by hand
+
+# Pacing. These exist to keep you under the radar -- raising them is the
+# fastest way to get an account restricted.
+limits:
+  max_jobs_per_search: 50
+  applications_per_day: 12
+
+searches:
+  linkedin:
+    - name: "Backend Python - Bangalore"
+      keywords: "python backend engineer"
+      location: "Bengaluru, Karnataka, India"
+      easy_apply_only: true          # skip jobs that redirect to external ATS
+      posted_within: week            # day | week | month
+      workplace: [remote, hybrid]    # onsite | remote | hybrid
+      job_type: [fulltime]
+      experience: [mid-senior, associate]
+
+    - name: "Remote Python - India"
+      keywords: "python developer"
+      location: "India"
+      easy_apply_only: true
+      posted_within: week
+      workplace: [remote]
+
+  naukri:
+    - name: "Backend Python - Bangalore"
+      keywords: "python backend developer"
+      location: "bangalore"
+      experience_years: 5            # your years of experience
+      posted_within_days: 7
+      min_salary_lpa: 20
+
+# Used by the scoring stage.
+# ANTHROPIC_API_KEY must be set as an environment variable (never put it here) --
+#   export ANTHROPIC_API_KEY=your-key-here
+# Get one at https://console.anthropic.com/settings/keys
+profile:
+  resume_path: ./resume.pdf
+
+  # Jobs scoring >= this are marked 'queued' -- ready for auto-apply later.
+  # Below this, jobs are marked 'scored' and wait for your manual review.
+  # Start high (80+) and lower it once you trust the scoring on real results.
+  auto_apply_threshold: 80
+
+  must_have: []                # e.g. ["product management", "fintech"]
+  deal_breakers: ["night shift", "unpaid", "commission only"]

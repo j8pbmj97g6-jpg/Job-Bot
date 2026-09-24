@@ -1,0 +1,24 @@
+# Secrets / personal data -- never commit these
+config.yaml
+jobs.db*
+*.csv
+resume.pdf
+resume.cache.txt
+tailored_resumes/
+
+# Accidental artifacts (a literal '~' dir has shown up here before from a
+# mis-expanded path -- it's a full duplicate Chrome profile with real
+# session cookies if it exists; never commit it)
+~/
+debug_*.png
+debug_*.log
+
+# Local dev / OS junk
+__pycache__/
+.venv/
+.DS_Store
+.claude/
+
+# One-off script with real contact info hardcoded -- superseded by
+# config.example.yaml, not needed going forward
+fix_config.py
